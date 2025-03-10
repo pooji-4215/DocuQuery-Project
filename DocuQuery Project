@@ -1,0 +1,66 @@
+import os
+import streamlit as st
+import PyPDF2
+import google.generativeai as genai
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings import GooglePalmEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.llms import GooglePalm
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
+
+# Set API Key
+os.environ['GOOGLE_API_KEY'] = "YOUR_API_KEY_HERE"
+
+# Initialize Google PALM model
+genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+
+def extract_text_from_pdf(pdf_files):
+    """Extracts text from uploaded PDF files."""
+    text = ""
+    for pdf in pdf_files:
+        pdf_reader = PyPDF2.PdfReader(pdf)
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+    return text
+
+def split_text_into_chunks(text):
+    """Splits text into smaller chunks for processing."""
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=20)
+    return text_splitter.split_text(text)
+
+def create_vector_store(text_chunks):
+    """Generates embeddings and stores them in FAISS."""
+    embeddings = GooglePalmEmbeddings()
+    vector_store = FAISS.from_texts(text_chunks, embeddings)
+    return vector_store
+
+def setup_conversational_chain(vector_store):
+    """Sets up the conversational retrieval chain."""
+    llm = GooglePalm()
+    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    conversation_chain = ConversationalRetrievalChain.from_llm(llm, retriever=vector_store.as_retriever(), memory=memory)
+    return conversation_chain
+
+def main():
+    st.set_page_config(page_title="DocuQuery: AI-Powered PDF Assistant")
+    st.title("📄 DocuQuery: AI-Powered PDF Knowledge Assistant")
+    
+    uploaded_files = st.sidebar.file_uploader("Upload your PDFs", accept_multiple_files=True, type=["pdf"])
+    process_button = st.sidebar.button("Process")
+    
+    if process_button and uploaded_files:
+        with st.spinner("Processing Documents..."):
+            extracted_text = extract_text_from_pdf(uploaded_files)
+            text_chunks = split_text_into_chunks(extracted_text)
+            vector_store = create_vector_store(text_chunks)
+            st.session_state.conversation_chain = setup_conversational_chain(vector_store)
+            st.success("Documents Processed Successfully!")
+    
+    user_question = st.text_input("Ask a question based on your documents:")
+    if user_question and "conversation_chain" in st.session_state:
+        response = st.session_state.conversation_chain.invoke(user_question)
+        st.write("🤖 AI:", response["answer"])
+
+if __name__ == "__main__":
+    main()
